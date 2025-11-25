@@ -250,7 +250,7 @@
     function renderTreemap(data, year) {
       treemapDiv.selectAll("*").remove();
 
-      // Group by team, then position bucket
+      // Group by team then position bucket
       const grouped = d3.group(data, d => d.team);
 
       const root = d3.hierarchy({
@@ -306,7 +306,7 @@
         });
     }
 
-    /* ------------------------ Scatter: Cap vs Metric ------------------------ */
+    /* ------------------------ Scatter ------------------------ */
 
     function renderScatter(data, year, teamFilter, posBucket) {
       scatterDiv.selectAll("*").remove();
@@ -419,7 +419,7 @@
         });
     }
 
-    /* ------------------------ Bar: total cap by position ------------------------ */
+    /* ------------------------ Bar ------------------------ */
 
     function renderBar(data, year) {
       barDiv.selectAll("*").remove();
@@ -486,7 +486,7 @@
         });
     }
 
-    /* ------------------------ Team trend line (4th chart) ------------------------ */
+    /* ------------------------ Line ------------------------ */
 
     function renderTeamLine(data, teamFilter, posBucket) {
       teamlineDiv.selectAll("*").remove();
