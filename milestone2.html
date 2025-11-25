@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>NFL Cap vs Performance – Milestone2</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 20px;
+      background: #f7f7f7;
+    }
+    h1 {
+      margin-bottom: 0.25rem;
+    }
+    h2 {
+      margin: 1.5rem 0 0.5rem;
+    }
+    #controls {
+      margin: 10px 0 20px;
+    }
+    #controls label {
+      margin-right: 6px;
+    }
+    #controls select {
+      margin-right: 16px;
+      padding: 4px 8px;
+      font-size: 14px;
+    }
+    #layout {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      grid-auto-rows: auto;
+      gap: 20px;
+      align-items: start;
+    }
+    #treemap-container,
+    #scatter-container,
+    #bar-container,
+    #teamline-container {
+      background: white;
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    #treemap {
+      position: relative;
+      border: 1px solid #ddd;
+    }
+    .treemap-node {
+      position: absolute;
+      font-size: 10px;
+      color: white;
+      overflow: hidden;
+      padding: 2px;
+      box-sizing: border-box;
+    }
+    .tooltip {
+      position: absolute;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid #999;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      pointer-events: none;
+      box-shadow: 0px 2px 4px rgba(0,0,0,0.3);
+    }
+    svg {
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>NFL Positional Spending vs Performance</h1>
+  <p>PROTOTYPE – How does the amount of cap space allocated to positions effect their performance?</p>
+
+  <!-- the Dropdowns -->
+  <div id="controls">
+    <label for="season-select">Season:</label>
+    <select id="season-select"></select>
+
+    <label for="team-select">Team:</label>
+    <select id="team-select"></select>
+
+    <label for="pos-select">Position:</label>
+    <select id="pos-select"></select>
+  </div>
+
+  <!-- Layout->  Treemap + Scatter + Bar + Team line -->
+  <div id="layout">
+    <div id="treemap-container">
+      <h2>TREEMAP: Team &amp; Position Cap Allocation</h2>
+      <p style="font-size: 12px; color: #555; margin-top: 0;">
+        Each rectangle is a team–position group; area = cap spend (millions). Color = position bucket.
+      </p>
+      <div id="treemap"></div>
+    </div>
+
+    <div id="scatter-container">
+      <h2>SCATTER: Cap vs Performance</h2>
+      <p style="font-size: 12px; color: #555; margin-top: 0;">
+        One dot per team per season. Filters by season, team, and position group.
+      </p>
+      <div id="scatter"></div>
+    </div>
+
+    <div id="bar-container">
+      <h2>BAR: Total Cap by Position Group</h2>
+      <p style="font-size: 12px; color: #555; margin-top: 0;">
+        The sum of cap spending for each position bucket in the selected season.
+      </p>
+      <div id="bar"></div>
+    </div>
+
+    <div id="teamline-container">
+      <h2>LINE: Team Performance Trend Over Time</h2>
+      <p style="font-size: 12px; color: #555; margin-top: 0;">
+        Select a team and position to see how its metric changes across seasons.
+      </p>
+      <div id="teamline"></div>
+    </div>
+  </div>
+
+  <script>
+    const treemapWidth  = 700;
+    const treemapHeight = 500;
+    const scatterWidth  = 500;
+    const scatterHeight = 300;
+    const barWidth      = 500;
+    const barHeight     = 300;
+    const teamlineWidth = 700;
+    const teamlineHeight = 300;
+
+    const treemapDiv = d3.select("#treemap")
+      .style("width", treemapWidth + "px")
+      .style("height", treemapHeight + "px");
+
+    const scatterDiv  = d3.select("#scatter");
+    const barDiv      = d3.select("#bar");
+    const teamlineDiv = d3.select("#teamline");
+
+    const tooltip = d3.select("body")
+      .append("div")
+      .attr("class", "tooltip")
+      .style("opacity", 0);
+
+    let fullData = [];
+    let currentSeason = null;
+    let currentTeam = "ALL";
+    let currentPos  = "QB";
+
+    const POS_CONFIG = {
+      "QB":   { metricCol: "qb_epa_per_dropback",  label: "QB EPA per Dropback" },
+      "RB":   { metricCol: "rb_epa_per_carry",     label: "RB EPA per Carry" },
+      "WRTE": { metricCol: "wrte_yards_per_target", label: "Yards per Target (WR/TE)" },
+      "OL":   { metricCol: "ol_sack_rate",         label: "Sack Rate (sacks/dropback, lower is better)" },
+      "DEF":  { metricCol: null,                   label: "Defensive Metric (N/A in this prototype)" }
+    };
+
+    const POS_BUCKETS = ["QB", "RB", "WRTE", "OL", "DEF"];
+
+    // Load data once
+    d3.csv("merged_nfl_data.csv").then(raw => {
+      raw.forEach(d => {
+        d.season = +d.season;
+        d.Cap_Millions = +d.Cap_Millions;
+        d.qb_epa_per_dropback = +d.qb_epa_per_dropback;
+        d.rb_epa_per_carry    = +d.rb_epa_per_carry;
+        d.wrte_yards_per_target = +d.wrte_yards_per_target;
+        d.ol_sack_rate        = +d.ol_sack_rate;
+      });
+
+      fullData = raw;
+
+      // Populate dropdowns
+      const seasons = Array.from(new Set(fullData.map(d => d.season))).sort(d3.ascending);
+      const latest = d3.max(seasons);
+      currentSeason = latest;
+
+      const seasonSelect = d3.select("#season-select");
+      seasonSelect.selectAll("option")
+        .data(seasons)
+        .join("option")
+        .attr("value", d => d)
+        .text(d => d);
+      seasonSelect.property("value", latest);
+
+      const posSelect = d3.select("#pos-select");
+      posSelect.selectAll("option")
+        .data(POS_BUCKETS)
+        .join("option")
+        .attr("value", d => d)
+        .text(d => d);
+      posSelect.property("value", currentPos);
+
+      updateTeamOptions(currentSeason);
+
+      updateAllViews();
+
+      seasonSelect.on("change", (event) => {
+        currentSeason = +event.target.value;
+        updateTeamOptions(currentSeason);
+        updateAllViews();
+      });
+
+      d3.select("#team-select").on("change", (event) => {
+        currentTeam = event.target.value;
+        updateAllViews();
+      });
+
+      posSelect.on("change", (event) => {
+        currentPos = event.target.value;
+        updateAllViews();
+      });
+    });
+
+    // Update team dropdown based on selected season
+    function updateTeamOptions(year) {
+      const teams = Array.from(
+        new Set(fullData.filter(d => d.season === year).map(d => d.team))
+      ).sort(d3.ascending);
+
+      const optionsData = ["ALL", ...teams];
+      const sel = d3.select("#team-select");
+
+      sel.selectAll("option")
+        .data(optionsData)
+        .join("option")
+        .attr("value", d => d)
+        .text(d => d === "ALL" ? "All Teams" : d);
+
+      if (!currentTeam || !optionsData.includes(currentTeam)) {
+        currentTeam = "ALL";
+      }
+      sel.property("value", currentTeam);
+    }
+
+    function updateAllViews() {
+      const seasonData = fullData.filter(d => d.season === currentSeason);
+
+      renderTreemap(seasonData, currentSeason);
+      renderScatter(seasonData, currentSeason, currentTeam, currentPos);
+      renderBar(seasonData, currentSeason);
+      renderTeamLine(fullData, currentTeam, currentPos);
+    }
+
+    /* ------------------------ Treemap ------------------------ */
+
+    function renderTreemap(data, year) {
+      treemapDiv.selectAll("*").remove();
+
+      // Group by team, then position bucket
+      const grouped = d3.group(data, d => d.team);
+
+      const root = d3.hierarchy({
+        name: "root",
+        children: Array.from(grouped, ([team, rows]) => ({
+          name: team,
+          children: rows.map(r => ({
+            name: r.Pos_Bucket,
+            value: r.Cap_Millions
+          }))
+        }))
+      }).sum(d => d.value || 0);
+
+      d3.treemap()
+        .size([treemapWidth, treemapHeight])
+        .paddingInner(1)
+        .paddingOuter(2)(root);
+
+      const color = d3.scaleOrdinal()
+        .domain(POS_BUCKETS)
+        .range(d3.schemeTableau10);
+
+      treemapDiv.selectAll(".treemap-node")
+        .data(root.leaves())
+        .join("div")
+        .attr("class", "treemap-node")
+        .style("left", d => d.x0 + "px")
+        .style("top", d => d.y0 + "px")
+        .style("width", d => (d.x1 - d.x0) + "px")
+        .style("height", d => (d.y1 - d.y0) + "px")
+        .style("background", d => color(d.data.name))
+        .on("mouseover", (event, d) => {
+          tooltip.style("opacity", 1)
+            .html(`
+              <b>${d.parent.data.name} – ${d.data.name}</b><br>
+              Season: ${year}<br>
+              Cap: ${d.data.value.toFixed(1)}M
+            `)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mousemove", (event) => {
+          tooltip.style("left", (event.pageX + 10) + "px")
+                 .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mouseout", () => {
+          tooltip.style("opacity", 0);
+        })
+        .text(d => {
+          const team = d.parent.data.name;
+          const bucket = d.data.name;
+          return team + " " + bucket;
+        });
+    }
+
+    /* ------------------------ Scatter: Cap vs Metric ------------------------ */
+
+    function renderScatter(data, year, teamFilter, posBucket) {
+      scatterDiv.selectAll("*").remove();
+
+      const cfg = POS_CONFIG[posBucket];
+      const metricCol = cfg ? cfg.metricCol : null;
+      const metricLabel = cfg ? cfg.label : "Metric";
+
+      const margin = { top: 20, right: 20, bottom: 50, left: 60 };
+      const width  = scatterWidth;
+      const height = scatterHeight;
+
+      const svg = scatterDiv.append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+      const g = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      // Filter by position + optional team
+      let subset = data.filter(d => d.Pos_Bucket === posBucket);
+
+      if (teamFilter && teamFilter !== "ALL") {
+        subset = subset.filter(d => d.team === teamFilter);
+      }
+
+      // Require numeric cap + metric
+      subset = subset.filter(d =>
+        Number.isFinite(d.Cap_Millions) &&
+        metricCol &&
+        Number.isFinite(d[metricCol])
+      );
+
+      if (!subset.length) {
+        g.append("text")
+          .attr("x", 20)
+          .attr("y", 20)
+          .text("No data for this season / team / position.");
+        return;
+      }
+
+      const x = d3.scaleLinear()
+        .domain(d3.extent(subset, d => d.Cap_Millions)).nice()
+        .range([0, width - margin.left - margin.right]);
+
+      const y = d3.scaleLinear()
+        .domain(d3.extent(subset, d => d[metricCol])).nice()
+        .range([height - margin.top - margin.bottom, 0]);
+
+      // axes
+      g.append("g")
+        .attr("transform", `translate(0,${height - margin.top - margin.bottom})`)
+        .call(d3.axisBottom(x));
+
+      g.append("g")
+        .call(d3.axisLeft(y));
+
+      // labels
+      g.append("text")
+        .attr("x", (width - margin.left - margin.right) / 2)
+        .attr("y", height - margin.top - 5)
+        .attr("text-anchor", "middle")
+        .text(`${posBucket} Cap Spending (Millions)`);
+
+      g.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("x", -(height - margin.top - margin.bottom) / 2)
+        .attr("y", -45)
+        .attr("text-anchor", "middle")
+        .text(metricLabel);
+
+      const titleText = teamFilter === "ALL"
+        ? `${posBucket} – league-wide`
+        : `${posBucket} – ${teamFilter}`;
+
+      g.append("text")
+        .attr("x", (width - margin.left - margin.right) / 2)
+        .attr("y", -5)
+        .attr("text-anchor", "middle")
+        .attr("font-weight", "bold")
+        .text(`Season ${year}: ${titleText}`);
+
+      // points
+      g.selectAll("circle")
+        .data(subset)
+        .join("circle")
+        .attr("cx", d => x(d.Cap_Millions))
+        .attr("cy", d => y(d[metricCol]))
+        .attr("r", 4)
+        .attr("fill", "#1f77b4")
+        .attr("opacity", 0.8)
+        .on("mouseover", (event, d) => {
+          tooltip.style("opacity", 1)
+            .html(`
+              <b>${d.team}</b><br>
+              Season: ${d.season}<br>
+              Pos: ${d.Pos_Bucket}<br>
+              Cap: ${d.Cap_Millions.toFixed(1)}M<br>
+              ${metricLabel}: ${d[metricCol].toFixed(3)}
+            `)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mousemove", (event) => {
+          tooltip.style("left", (event.pageX + 10) + "px")
+                 .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mouseout", () => {
+          tooltip.style("opacity", 0);
+        });
+    }
+
+    /* ------------------------ Bar: total cap by position ------------------------ */
+
+    function renderBar(data, year) {
+      barDiv.selectAll("*").remove();
+
+      const margin = { top: 20, right: 20, bottom: 40, left: 60 };
+      const width  = barWidth;
+      const height = barHeight;
+
+      const svg = barDiv.append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+      const g = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      const bucketTotals = POS_BUCKETS.map(bucket => {
+        const rows = data.filter(d => d.Pos_Bucket === bucket);
+        return {
+          bucket,
+          total: d3.sum(rows, d => d.Cap_Millions || 0)
+        };
+      });
+
+      const x = d3.scaleBand()
+        .domain(POS_BUCKETS)
+        .range([0, width - margin.left - margin.right])
+        .padding(0.2);
+
+      const y = d3.scaleLinear()
+        .domain([0, d3.max(bucketTotals, d => d.total)]).nice()
+        .range([height - margin.top - margin.bottom, 0]);
+
+      g.append("g")
+        .attr("transform", `translate(0,${height - margin.top - margin.bottom})`)
+        .call(d3.axisBottom(x));
+
+      g.append("g")
+        .call(d3.axisLeft(y));
+
+      g.selectAll("rect")
+        .data(bucketTotals)
+        .join("rect")
+        .attr("x", d => x(d.bucket))
+        .attr("y", d => y(d.total))
+        .attr("width", x.bandwidth())
+        .attr("height", d => (height - margin.top - margin.bottom) - y(d.total))
+        .attr("fill", "#7b9acc")
+        .on("mouseover", (event, d) => {
+          tooltip.style("opacity", 1)
+            .html(`
+              <b>${d.bucket}</b><br>
+              Season: ${year}<br>
+              Total Cap: ${d.total.toFixed(1)}M
+            `)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mousemove", (event) => {
+          tooltip.style("left", (event.pageX + 10) + "px")
+                 .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mouseout", () => {
+          tooltip.style("opacity", 0);
+        });
+    }
+
+    /* ------------------------ Team trend line (4th chart) ------------------------ */
+
+    function renderTeamLine(data, teamFilter, posBucket) {
+      teamlineDiv.selectAll("*").remove();
+
+      const margin = { top: 20, right: 20, bottom: 40, left: 60 };
+      const width  = teamlineWidth;
+      const height = teamlineHeight;
+
+      const svg = teamlineDiv.append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+      const g = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      if (!teamFilter || teamFilter === "ALL") {
+        g.append("text")
+          .attr("x", 20)
+          .attr("y", 20)
+          .text("Select a specific team to see its trend over time.");
+        return;
+      }
+
+      const cfg = POS_CONFIG[posBucket];
+      const metricCol = cfg ? cfg.metricCol : null;
+      const metricLabel = cfg ? cfg.label : "Metric";
+
+      if (!metricCol) {
+        g.append("text")
+          .attr("x", 20)
+          .attr("y", 20)
+          .text(`No metric defined for position: ${posBucket}.`);
+        return;
+      }
+
+      const subset = data.filter(d =>
+        d.team === teamFilter &&
+        d.Pos_Bucket === posBucket &&
+        Number.isFinite(d.season) &&
+        Number.isFinite(d[metricCol])
+      );
+
+      if (!subset.length) {
+        g.append("text")
+          .attr("x", 20)
+          .attr("y", 20)
+          .text("No historical data for this team / position.");
+        return;
+      }
+
+      subset.sort((a, b) => d3.ascending(a.season, b.season));
+
+      const x = d3.scaleLinear()
+        .domain(d3.extent(subset, d => d.season))
+        .range([0, width - margin.left - margin.right]);
+
+      const y = d3.scaleLinear()
+        .domain(d3.extent(subset, d => d[metricCol])).nice()
+        .range([height - margin.top - margin.bottom, 0]);
+
+      g.append("g")
+        .attr("transform", `translate(0,${height - margin.top - margin.bottom})`)
+        .call(d3.axisBottom(x).tickFormat(d3.format("d")));
+
+      g.append("g")
+        .call(d3.axisLeft(y));
+
+      const line = d3.line()
+        .x(d => x(d.season))
+        .y(d => y(d[metricCol]));
+
+      g.append("path")
+        .datum(subset)
+        .attr("fill", "none")
+        .attr("stroke", "#e45756")
+        .attr("stroke-width", 2)
+        .attr("d", line);
+
+      g.selectAll("circle")
+        .data(subset)
+        .join("circle")
+        .attr("cx", d => x(d.season))
+        .attr("cy", d => y(d[metricCol]))
+        .attr("r", 3)
+        .attr("fill", "#e45756")
+        .on("mouseover", (event, d) => {
+          tooltip.style("opacity", 1)
+            .html(`
+              <b>${d.team}</b><br>
+              Season: ${d.season}<br>
+              Pos: ${d.Pos_Bucket}<br>
+              ${metricLabel}: ${d[metricCol].toFixed(3)}
+            `)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mousemove", (event) => {
+          tooltip.style("left", (event.pageX + 10) + "px")
+                 .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mouseout", () => {
+          tooltip.style("opacity", 0);
+        });
+
+      g.append("text")
+        .attr("x", (width - margin.left - margin.right) / 2)
+        .attr("y", -5)
+        .attr("text-anchor", "middle")
+        .attr("font-weight", "bold")
+        .text(`${teamFilter} – ${posBucket} ${metricLabel} over time`);
+
+      g.append("text")
+        .attr("x", (width - margin.left - margin.right) / 2)
+        .attr("y", height - margin.top)
+        .attr("text-anchor", "middle")
+        .text("Season");
+
+      g.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("x", -(height - margin.top - margin.bottom) / 2)
+        .attr("y", -45)
+        .attr("text-anchor", "middle")
+        .text(metricLabel);
+    }
+  </script>
+
+</body>
+</html>
