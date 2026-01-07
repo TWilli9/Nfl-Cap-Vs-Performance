@@ -6,27 +6,58 @@
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 20px;
-      background: #f7f7f7;
-    }
-    h1 {
-      margin-bottom: 0.25rem;
-    }
-    h2 {
-      margin: 1.5rem 0 0.5rem;
-    }
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 20px;
+    background: #f4f6f8;        
+    color: #0B1E3F;             
+  }
+
+  h1 {
+    margin-bottom: 0.2rem;
+    font-size: 32px;
+    font-weight: 700;
+    color: #0B1E3F;            
+  }
+
+  h2 {
+    margin: 1.2rem 0 0.4rem;
+    font-weight: 700;
+    color: #0B1E3F;
+  }
+
     #controls {
-      margin: 10px 0 20px;
+      margin: 16px 0 24px;
+      background: #ffffff;
+      padding: 12px 18px;
+      border-radius: 10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 14px;
+      border-left: 5px solid #C60C30;  
     }
+
     #controls label {
-      margin-right: 6px;
+      font-weight: 600;
+      color: #0B1E3F; 
     }
+
     #controls select {
-      margin-right: 16px;
-      padding: 4px 8px;
+      padding: 6px 10px;
       font-size: 14px;
+      border: 1px solid #c9cdd1;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #0B1E3F;
+      transition: 0.2s ease;
+      cursor: pointer;
     }
+
+      #controls select:hover {
+        border-color: #0B1E3F;  
+        box-shadow: 0 0 3px rgba(0,0,0,0.15);
+      }
     #layout {
       display: grid;
       grid-template-columns: 1.4fr 1fr;
@@ -38,10 +69,22 @@
     #scatter-container,
     #bar-container,
     #teamline-container {
-      background: white;
-      border-radius: 8px;
-      padding: 10px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 16px 18px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.10);
+      border-top: 4px solid #0B1E3F;   
+    }
+
+    
+    #treemap-container h2,
+    #scatter-container h2,
+    #bar-container h2,
+    #teamline-container h2 {
+      margin-top: 0;
+      margin-bottom: 6px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #C60C30;  
     }
     #treemap {
       position: relative;
@@ -68,12 +111,74 @@
     svg {
       font-size: 11px;
     }
+        #summary-container {
+      background: #ffffff;
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      border-left: 5px solid #0B1E3F;  
+    }
+
+    #summary-container h2 {
+      margin-top: 0;
+      margin-bottom: 4px;
+    }
+
+    #summary-container p {
+      margin-top: 0;
+      font-size: 12px;
+      color: #666;
+    }
+
+
+  #summary-content {
+    margin-top: 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+
+  
+  .stat-card {
+    background: #f8fafc;
+    border-radius: 8px;
+    border: 1px solid #d9dfe6;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    transition: 0.15s ease;
+  }
+
+  .stat-card:hover {
+    background: #eef3f8;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+  }
+
+  
+  .stat-label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #0B1E3F;
+    margin-bottom: 2px;
+  }
+
+  .stat-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0B1E3F;
+    margin-bottom: 2px;
+  }
+
   </style>
 </head>
 <body>
 
   <h1>NFL Positional Spending vs Performance</h1>
-  <p>PROTOTYPE – How does the amount of cap space allocated to positions effect their performance?</p>
+  <p>How does the amount of cap space allocated to positions effect their performance?</p>
 
   <!-- the Dropdowns -->
   <div id="controls">
@@ -86,6 +191,16 @@
     <label for="pos-select">Position:</label>
     <select id="pos-select"></select>
   </div>
+
+  <!-- Summary panel -->
+  <div id="summary-container">
+    <h2>Summary Stats</h2>
+    <p style="font-size: 12px; color: #555; margin-top: 0;">
+      Quick snapshot for the current season / team / position selection.
+    </p>
+    <div id="summary-content"></div>
+  </div>
+
 
   <!-- Layout->  Treemap + Scatter + Bar + Team line -->
   <div id="layout">
@@ -236,14 +351,159 @@
       sel.property("value", currentTeam);
     }
 
+        // ----- Summary stats  -----
+    function updateSummary(seasonData) {
+      const summaryDiv = d3.select("#summary-content");
+      summaryDiv.selectAll("*").remove();
+
+      if (!seasonData || !seasonData.length) {
+        summaryDiv.append("div")
+          .attr("class", "stat-card")
+          .append("div")
+          .text("No data for this season.");
+        return;
+      }
+
+      // Filter
+      const posData = seasonData.filter(d => d.Pos_Bucket === currentPos);
+
+      if (!posData.length) {
+        summaryDiv.append("div")
+          .attr("class", "stat-card")
+          .append("div")
+          .text(`No data for position ${currentPos} in ${currentSeason}.`);
+        return;
+      }
+
+      const cfg = POS_CONFIG[currentPos] || {};
+      const metricCol = cfg.metricCol;
+      const metricLabel = cfg.label || "Performance Metric";
+
+      // ----------  Total Cap ----------
+      let totalCap = 0;
+      let totalCapLabel = "";
+
+      if (currentTeam === "ALL") {
+        totalCap = d3.sum(posData, d => d.Cap_Millions || 0);
+        totalCapLabel = `League-wide ${currentPos} cap in ${currentSeason}`;
+      } else {
+        const teamRows = posData.filter(d => d.team === currentTeam);
+        totalCap = d3.sum(teamRows, d => d.Cap_Millions || 0);
+        totalCapLabel = `${currentTeam} ${currentPos} cap in ${currentSeason}`;
+      }
+
+      const totalCapCard = summaryDiv.append("div").attr("class", "stat-card");
+      totalCapCard.append("div").attr("class", "stat-label").text("Total Cap");
+      totalCapCard.append("div").attr("class", "stat-value")
+        .text(`${totalCap.toFixed(1)}M`);
+      totalCapCard.append("div")
+        .style("font-size", "11px")
+        .style("color", "#666")
+        .text(totalCapLabel);
+
+      if (currentTeam === "ALL") {
+        const infoCard = summaryDiv.append("div").attr("class", "stat-card");
+        infoCard.append("div").attr("class", "stat-label").text("Ranks");
+        infoCard.append("div").attr("class", "stat-value")
+          .text("Select a team to see spending / performance ranks.");
+        return;
+      }
+
+      // ----------  Spending Rank ----------
+      const teamCaps = Array.from(
+        d3.rollup(
+          posData,
+          v => d3.sum(v, d => d.Cap_Millions || 0),
+          d => d.team
+        ),
+        ([team, cap]) => ({ team, cap })
+      ).sort((a, b) => d3.descending(a.cap, b.cap));
+
+      const numTeamsCap = teamCaps.length;
+      const spendIndex = teamCaps.findIndex(d => d.team === currentTeam);
+      const spendRank = spendIndex >= 0 ? spendIndex + 1 : null;
+      const thisTeamCapObj = teamCaps.find(d => d.team === currentTeam);
+
+      const spendCard = summaryDiv.append("div").attr("class", "stat-card");
+      spendCard.append("div").attr("class", "stat-label").text("Spending Rank");
+      spendCard.append("div").attr("class", "stat-value")
+        .text(spendRank ? `${spendRank} / ${numTeamsCap}` : "N/A");
+      if (thisTeamCapObj) {
+        spendCard.append("div")
+          .style("font-size", "11px")
+          .style("color", "#666")
+          .text(`Team cap: ${thisTeamCapObj.cap.toFixed(1)}M`);
+      }
+
+      // ----------  Performance Rank ----------
+      if (!metricCol) {
+        const perfCard = summaryDiv.append("div").attr("class", "stat-card");
+        perfCard.append("div").attr("class", "stat-label").text("Performance Rank");
+        perfCard.append("div").attr("class", "stat-value")
+          .text(`No performance metric defined for ${currentPos}.`);
+        return;
+      }
+
+      const perfData = posData.filter(d => Number.isFinite(d[metricCol]));
+
+      if (!perfData.length) {
+        const perfCard = summaryDiv.append("div").attr("class", "stat-card");
+        perfCard.append("div").attr("class", "stat-label").text("Performance Rank");
+        perfCard.append("div").attr("class", "stat-value").text("N/A");
+        perfCard.append("div")
+          .style("font-size", "11px")
+          .style("color", "#666")
+          .text(`No valid ${metricLabel} data.`);
+        return;
+      }
+
+      let teamMetrics = Array.from(
+        d3.rollup(
+          perfData,
+          v => d3.mean(v, d => d[metricCol]),
+          d => d.team
+        ),
+        ([team, metric]) => ({ team, metric })
+      );
+
+
+      if (currentPos === "OL") {
+        teamMetrics.sort((a, b) => d3.ascending(a.metric, b.metric));
+      } else {
+        teamMetrics.sort((a, b) => d3.descending(a.metric, b.metric));
+      }
+
+      const numTeamsPerf = teamMetrics.length;
+      const perfIndex = teamMetrics.findIndex(d => d.team === currentTeam);
+      const perfRank = perfIndex >= 0 ? perfIndex + 1 : null;
+      const thisTeamMetricObj = teamMetrics.find(d => d.team === currentTeam);
+
+      const perfCard = summaryDiv.append("div").attr("class", "stat-card");
+      perfCard.append("div").attr("class", "stat-label").text("Performance Rank");
+      perfCard.append("div").attr("class", "stat-value")
+        .text(perfRank ? `${perfRank} / ${numTeamsPerf}` : "N/A");
+
+      if (thisTeamMetricObj) {
+        perfCard.append("div")
+          .style("font-size", "11px")
+          .style("color", "#666")
+          .text(`${metricLabel}: ${thisTeamMetricObj.metric.toFixed(3)}`);
+      }
+    }
+
+
+
     function updateAllViews() {
       const seasonData = fullData.filter(d => d.season === currentSeason);
+
+      updateSummary(seasonData);  
 
       renderTreemap(seasonData, currentSeason);
       renderScatter(seasonData, currentSeason, currentTeam, currentPos);
       renderBar(seasonData, currentSeason);
       renderTeamLine(fullData, currentTeam, currentPos);
     }
+
 
     /* ------------------------ Treemap ------------------------ */
 
@@ -274,36 +534,50 @@
         .range(d3.schemeTableau10);
 
       treemapDiv.selectAll(".treemap-node")
-        .data(root.leaves())
-        .join("div")
-        .attr("class", "treemap-node")
-        .style("left", d => d.x0 + "px")
-        .style("top", d => d.y0 + "px")
-        .style("width", d => (d.x1 - d.x0) + "px")
-        .style("height", d => (d.y1 - d.y0) + "px")
-        .style("background", d => color(d.data.name))
-        .on("mouseover", (event, d) => {
-          tooltip.style("opacity", 1)
-            .html(`
-              <b>${d.parent.data.name} – ${d.data.name}</b><br>
-              Season: ${year}<br>
-              Cap: ${d.data.value.toFixed(1)}M
-            `)
-            .style("left", (event.pageX + 10) + "px")
-            .style("top", (event.pageY - 20) + "px");
-        })
-        .on("mousemove", (event) => {
-          tooltip.style("left", (event.pageX + 10) + "px")
-                 .style("top", (event.pageY - 20) + "px");
-        })
-        .on("mouseout", () => {
-          tooltip.style("opacity", 0);
-        })
-        .text(d => {
-          const team = d.parent.data.name;
-          const bucket = d.data.name;
-          return team + " " + bucket;
-        });
+      .data(root.leaves())
+      .join("div")
+      .attr("class", "treemap-node")
+      .style("left", d => d.x0 + "px")
+      .style("top", d => d.y0 + "px")
+      .style("width", d => (d.x1 - d.x0) + "px")
+      .style("height", d => (d.y1 - d.y0) + "px")
+      .style("background", d => color(d.data.name))
+      .on("mouseover", (event, d) => {
+        tooltip.style("opacity", 1)
+          .html(`
+            <b>${d.parent.data.name} – ${d.data.name}</b><br>
+            Season: ${year}<br>
+            Cap: ${d.data.value.toFixed(1)}M
+          `)
+          .style("left", (event.pageX + 10) + "px")
+          .style("top", (event.pageY - 20) + "px");
+      })
+      .on("mousemove", (event) => {
+        tooltip.style("left", (event.pageX + 10) + "px")
+              .style("top", (event.pageY - 20) + "px");
+      })
+      .on("mouseout", () => {
+        tooltip.style("opacity", 0);
+      })
+      .on("click", (event, d) => {
+        
+        const teamName = d.parent.data.name;
+
+        
+        currentTeam = teamName;
+
+       
+        d3.select("#team-select").property("value", teamName);
+
+        
+        updateAllViews();
+      })
+      .text(d => {
+        const team = d.parent.data.name;
+        const bucket = d.data.name;
+        return team + " " + bucket;
+      });
+
     }
 
     /* ------------------------ Scatter ------------------------ */
